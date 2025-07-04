@@ -1,0 +1,87 @@
+10: label "This is a Plug-in script to determine if a message is already in a Timeout Status. The script will retrieve the creation date of an outbound message and check if the creation date + X days is <= to the current date. If it is, the message should be set to another status depending on the parameter.  Author: Jan Hung  Revision History:  JHung - 06/01/2007 - CA054. Initial Version PBalao - 07/13/2009 - SP.12106. Add a logic in step 50 that checks if the Outbound Message ID Xpath has a value. If the XPath has a value, proceed with the process else terminate the script. EGregorio - 07/11/2023 - IND-39 Gas Cust Read not responded to as overlaps.";
+20: move "parm/hard/case/id" to "Z-CASE-BO-1/CaseID";
+30: invokeBO 'Z-CASE-BO-1' using "Z-CASE-BO-1" for read;
+40: edit data
+     if ("parm/soft[1]/value = $BLANK")
+          move 'Number of Days' to $reqParm;
+          goto 140;
+     end-if;
+     if ("parm/soft[3]/value = $BLANK")
+          move 'Outbound Message ID XPath' to $reqParm;
+          goto 140;
+     end-if;
+end-edit;
+50: edit data
+     if ("Z-CASE-BO-1/CaseChar/ShipRefNbr!= $BLANK")
+         move "Z-CASE-BO-1" to "Z-GET-CREDTT/input";
+         move "parm/soft[3]/value" to "Z-GET-CREDTT/input/OMIDXpath";
+         move 'N' to "Z-GET-CREDTT/input/TerminateWithErrorFlag";
+     else
+         goto 130;
+     end-if;
+end-edit;
+60: invokeSS 'Z-GET-CREDTT' using "Z-GET-CREDTT";
+70: branch ("Z-GET-CREDTT/output/ReturnCode = 'SUC'") goto 80 else 130;
+80: edit data
+     move "Z-CASE-BO-1/PremID" to "Z-DC-XWDYS/input/PremiseID";
+     move "Z-GET-CREDTT/output/CreationDttm" to "Z-DC-XWDYS/input/BeginDttm";
+     move "parm/soft[1]/value" to "Z-DC-XWDYS/input/NbrOfDays";
+end-edit;
+90: invokeSS 'Z-DC-XWDYS' using "Z-DC-XWDYS";
+100: branch ("Z-DC-XWDYS/output/ReturnCode = 'TRANOK'") goto 110 else 130;
+110: branch ("parm/soft[2]/value = $BLANK") goto 130 else 120;
+120: edit data
+     //Start Add IND-39 07-11-2023
+     if("Z-CASE-BO-1/CaseTypeCD = 'ZG-M801RQ'")
+       	//Get related G204N case
+     	move null to "Z-DATEMATH";
+     	move 'ADDD' to "Z-DATEMATH/Option";
+     	move "Z-GET-CREDTT/output/CreationDttm" to "Z-DATEMATH/BeginDttm";
+     	move "parm/soft[1]/value" to "Z-DATEMATH/Days";
+     	invokeBS 'Z-DATEMATH' using "Z-DATEMATH";
+     	move "Z-DATEMATH/EndDttm" to $endDate;
+     
+         move null to "Z-DATEMATH";
+         move 'ADDD' to "Z-DATEMATH/Option";
+         move "Z-GET-CREDTT/output/CreationDttm" to "Z-DATEMATH/BeginDttm";
+         move '-5' to "Z-DATEMATH/Days";
+         invokeBS 'Z-DATEMATH' using "Z-DATEMATH";
+         move "Z-DATEMATH/EndDttm" to $startDate;
+     
+         move null to "CM-GETRELCAS";
+         move 'GPRN' to "CM-GETRELCAS/GeoType";
+         move "Z-CASE-BO-1/CaseChar/GPRN" to "CM-GETRELCAS/GeoVal";
+         move 'Z-EFF-DT' to "CM-GETRELCAS/CharType";
+         move "substring($startDate,1,10)" to "CM-GETRELCAS/EffecDateStart";
+         move "substring($endDate,1,10)" to "CM-GETRELCAS/EffecDateEnd";
+         move 'ZG-G204N' to "CM-GETRELCAS/CaseType";
+     
+         invokeBS 'CM-GETRELCAS' using "CM-GETRELCAS";
+     
+         if("CM-GETRELCAS/RowCount >= 1 ")
+             //If there is a G204N case, transition to cancelled.
+             move 'Existing CoS Loss' to "Z-CASE-BO-1/CaseChar/CancelReasCode";
+             invokeBO 'Z-CASE-BO-1' using "Z-CASE-BO-1" for fastUpdate;
+     
+             move 'CXL' to "parm/hard/nextTransCondition";
+             move 'TRUE' to "parm/hard/shouldAutoTransition";
+     
+         else
+     
+             move "parm/soft[2]/value" to "parm/hard/nextTransCondition";
+             move 'TRUE' to "parm/hard/shouldAutoTransition";
+     
+         end-if;
+     
+     else
+     //End Add IND-39 07-11-2023
+     
+         move "parm/soft[2]/value" to "parm/hard/nextTransCondition";
+         move 'TRUE' to "parm/hard/shouldAutoTransition";
+     
+     //Start Add IND-39 07-11-2023
+     end-if;
+     //End Add IND-39 07-11-2023
+end-edit;
+130: terminate;
+140: terminate with error (99999, 254 %1="$reqParm");
